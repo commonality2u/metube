@@ -44,6 +44,7 @@ class DownloadInfo:
         self.size = None
         self.timestamp = time.time_ns()
         self.error = error
+        self.comment_count = None
 
 class Download:
     manager = None
@@ -276,20 +277,46 @@ class DownloadQueue:
         elif etype == 'playlist':
             log.debug('Processing as a playlist')
             entries = entry['entries']
-            log.info(f'playlist detected with {len(entries)} entries')
-            playlist_index_digits = len(str(len(entries)))
+            total_entries = len(entries)
+            log.info(f'playlist/channel detected with {total_entries} entries')
+            playlist_index_digits = len(str(total_entries))
             results = []
-            if playlist_item_limit > 0:
-                log.info(f'Playlist item limit is set. Processing only first {playlist_item_limit} entries')
-                entries = entries[:playlist_item_limit]
-            for index, etr in enumerate(entries, start=1):
-                etr["_type"] = "video" # Prevents video to be treated as url and lose below properties during processing
-                etr["playlist"] = entry["id"]
-                etr["playlist_index"] = '{{0:0{0:d}d}}'.format(playlist_index_digits).format(index)
-                for property in ("id", "title", "uploader", "uploader_id"):
-                    if property in entry:
-                        etr[f"playlist_{property}"] = entry[property]
-                results.append(await self.__add_entry(etr, quality, format, folder, custom_name_prefix, playlist_strict_mode, playlist_item_limit, auto_start, already))
+            
+            # Extract playlist/channel metadata
+            playlist_data = {
+                'id': entry.get('id'),
+                'title': entry.get('title'),
+                'uploader': entry.get('uploader'),
+                'uploader_id': entry.get('uploader_id'),
+                'playlist': entry.get('id'),
+                'playlist_title': entry.get('title'),
+                'playlist_uploader': entry.get('uploader'),
+                'playlist_uploader_id': entry.get('uploader_id')
+            }
+            
+            log.info(f'Channel/Playlist metadata: {playlist_data}')
+            
+            # Process all entries in batches
+            BATCH_SIZE = 50  # Process 50 videos at a time
+            BATCH_PAUSE = 2  # 2 second pause between batches
+            
+            for batch_start in range(0, total_entries, BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, total_entries)
+                batch = entries[batch_start:batch_end]
+                
+                log.info(f'Processing batch {batch_start//BATCH_SIZE + 1} of {(total_entries + BATCH_SIZE - 1)//BATCH_SIZE} ({batch_start+1}-{batch_end} of {total_entries} videos)')
+                
+                for index, etr in enumerate(batch, start=batch_start + 1):
+                    etr["_type"] = "video"
+                    etr.update(playlist_data)
+                    etr["playlist_index"] = '{{0:0{0:d}d}}'.format(playlist_index_digits).format(index)
+                    results.append(await self.__add_entry(etr, quality, format, folder, custom_name_prefix, playlist_strict_mode, playlist_item_limit, auto_start, already))
+                
+                # If this isn't the last batch, pause before continuing
+                if batch_end < total_entries:
+                    log.info(f'Pausing for {BATCH_PAUSE} seconds before next batch...')
+                    await asyncio.sleep(BATCH_PAUSE)
+            
             if any(res['status'] == 'error' for res in results):
                 return {'status': 'error', 'msg': ', '.join(res['msg'] for res in results if res['status'] == 'error' and 'msg' in res)}
             return {'status': 'ok'}
@@ -297,6 +324,7 @@ class DownloadQueue:
             log.debug('Processing as a video')
             if not self.queue.exists(entry['id']):
                 dl = DownloadInfo(entry['id'], entry.get('title') or entry['id'], entry.get('webpage_url') or entry['url'], quality, format, folder, custom_name_prefix, error)
+                dl.comment_count = entry.get('comment_count')
                 dldirectory, error_message = self.__calc_download_path(quality, format, folder)
                 if error_message is not None:
                     return error_message
@@ -311,10 +339,6 @@ class DownloadQueue:
                             output = output.replace(f"%({property})s", str(value))
 
                 ytdl_options = dict(self.config.YTDL_OPTIONS)
-
-                if playlist_item_limit > 0:
-                    log.info(f'playlist limit is set. Processing only first {playlist_item_limit} entries')
-                    ytdl_options['playlistend'] = playlist_item_limit
 
                 if auto_start is True:
                     self.queue.put(Download(dldirectory, self.config.TEMP_DIR, output, output_chapter, quality, format, ytdl_options, dl))
@@ -387,26 +411,18 @@ class DownloadQueue:
                list((k, v.info) for k, v in self.done.items()))
 
     async def __download(self):
+        semaphore = asyncio.Semaphore(16)  # 16 parallel downloads
+        
+        async def process_batch(batch):
+            async with semaphore:
+                return await asyncio.gather(*[
+                    self.__process_entry(entry)
+                    for entry in batch
+                ])
+
         while True:
-            while self.queue.empty():
-                log.info('waiting for item to download')
+            batch = [self.queue.next()[1] for _ in range(16) if not self.queue.empty()]
+            if batch:
+                await process_batch(batch)
+            else:
                 await self.event.wait()
-                self.event.clear()
-            id, entry = self.queue.next()
-            log.info(f'downloading {entry.info.title}')
-            await entry.start(self.notifier)
-            if entry.info.status != 'finished':
-                if entry.tmpfilename and os.path.isfile(entry.tmpfilename):
-                    try:
-                        os.remove(entry.tmpfilename)
-                    except:
-                        pass
-                entry.info.status = 'error'
-            entry.close()
-            if self.queue.exists(id):
-                self.queue.delete(id)
-                if entry.canceled:
-                    await self.notifier.canceled(id)
-                else:
-                    self.done.put(entry)
-                    await self.notifier.completed(entry.info)
