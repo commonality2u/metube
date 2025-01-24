@@ -1,0 +1,57 @@
+<div class="completed-downloads">
+  <h2>Completed Downloads</h2>
+  
+  <div class="download-list">
+    <mat-card *ngFor="let download of downloads" class="download-card">
+      <mat-card-header>
+        <mat-card-title>{{ download.title }}</mat-card-title>
+        <mat-card-subtitle>{{ download.metadata?.channel?.title }}</mat-card-subtitle>
+      </mat-card-header>
+
+      <mat-card-content>
+        <!-- Basic Info -->
+        <div class="info-section">
+          <div class="info-item">
+            <mat-icon>schedule</mat-icon>
+            <span>{{ download.metadata?.video?.duration }}</span>
+          </div>
+          <div class="info-item">
+            <mat-icon>visibility</mat-icon>
+            <span>{{ download.metadata?.video?.view_count | number }}</span>
+          </div>
+          <div class="info-item">
+            <mat-icon>thumb_up</mat-icon>
+            <span>{{ download.metadata?.video?.like_count | number }}</span>
+          </div>
+        </div>
+
+        <!-- Metadata Status -->
+        <div class="metadata-section">
+          <h3>Extracted Data</h3>
+          <div class="metadata-grid">
+            <div class="metadata-item" *ngFor="let item of getMetadataItems(download.metadata_status)">
+              <mat-icon [class]="item.status">{{getStatusIcon(item.status)}}</mat-icon>
+              <span>{{item.name}}</span>
+              <button mat-icon-button *ngIf="item.path" (click)="openFile(item.path)">
+                <mat-icon>open_in_new</mat-icon>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- File Paths -->
+        <div class="file-section" *ngIf="download.metadata?.files">
+          <h3>Files</h3>
+          <div class="file-list">
+            <div class="file-item" *ngFor="let file of getFiles(download.metadata.files)">
+              <span>{{file.name}}</span>
+              <button mat-icon-button (click)="openFile(file.path)">
+                <mat-icon>folder_open</mat-icon>
+              </button>
+            </div>
+          </div>
+        </div>
+      </mat-card-content>
+    </mat-card>
+  </div>
+</div> 

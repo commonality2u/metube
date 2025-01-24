@@ -12,11 +12,10 @@ import json
 import pathlib
 import asyncio
 from json_cleaner import JSONCleaner
+import signal
 
 from ytdl import DownloadQueueNotifier, DownloadQueue
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger('main')
 
 class Config:
@@ -33,11 +32,11 @@ class Config:
         'PUBLIC_HOST_URL': 'download/',
         'PUBLIC_HOST_AUDIO_URL': 'audio_download/',
         'OUTPUT_TEMPLATE': '%(channel)s/%(title)s.%(ext)s',
-        'OUTPUT_TEMPLATE_CHAPTER': '%(channel)s/%(playlist_title|Videos)s/chapters/%(title)s - %(section_number)s %(section_title)s.%(ext)s',
-        'OUTPUT_TEMPLATE_PLAYLIST': '%(channel)s/%(playlist_title|Videos)s/%(title)s.%(ext)s',
-        'OUTPUT_TEMPLATE_SUBTITLES': '%(channel)s/%(playlist_title|Videos)s/%(title)s.%(ext)s',
-        'OUTPUT_TEMPLATE_DESCRIPTION': '%(channel)s/%(playlist_title|Videos)s/descriptions/%(title)s.%(ext)s',
-        'OUTPUT_TEMPLATE_METADATA': '%(channel)s/%(playlist_title|Videos)s/metadata/%(title)s.%(ext)s',
+        'OUTPUT_TEMPLATE_CHAPTER': '%(channel)s/%(playlist_title|Channel Videos)s/chapters/%(title)s - %(section_number)s %(section_title)s.%(ext)s',
+        'OUTPUT_TEMPLATE_PLAYLIST': '%(channel)s/%(playlist_title|Channel Videos)s/%(title)s.%(ext)s',
+        'OUTPUT_TEMPLATE_SUBTITLES': '%(channel)s/%(playlist_title|Channel Videos)s/%(title)s.%(ext)s',
+        'OUTPUT_TEMPLATE_DESCRIPTION': '%(channel)s/%(playlist_title|Channel Videos)s/descriptions/%(title)s.%(ext)s',
+        'OUTPUT_TEMPLATE_METADATA': '%(channel)s/%(playlist_title|Channel Videos)s/metadata/%(title)s.%(ext)s',
         'DEFAULT_OPTION_PLAYLIST_STRICT_MODE': 'false',
         'DEFAULT_OPTION_PLAYLIST_ITEM_LIMIT': '0',
         'YTDL_OPTIONS': '{}',
@@ -91,14 +90,6 @@ class Config:
                 sys.exit(1)
             self.YTDL_OPTIONS.update(opts)
 
-async def init_app(app):
-    """Initialize the application"""
-    global dqueue
-    dqueue = DownloadQueue(config, Notifier())
-    await dqueue.initialize()
-    log.info("Application initialized successfully")
-    return app
-    
 config = Config()
 
 class ObjectSerializer(json.JSONEncoder):
@@ -125,14 +116,26 @@ class Notifier(DownloadQueueNotifier):
         await sio.emit('added', data)
 
     async def updated(self, dl):
-        await self.sio.emit('updated', {
-            'id': dl.id,
-            'title': dl.title,
-            'status': dl.status,
-            'error': dl.error if hasattr(dl, 'error') else None,
-            'progress': dl.progress,
-            'info': dl.info
-        })
+        data = ObjectSerializer().default(dl)
+        if hasattr(dl, 'metadata_status'):
+            data['metadata_status'] = dl.metadata_status
+        if hasattr(dl, 'metadata'):
+            data['metadata'] = dl.metadata
+        
+        # Include any error messages
+        if dl.error:
+            data['error'] = dl.error
+        
+        # Check for metadata-specific errors
+        if hasattr(dl, 'metadata_status'):
+            errors = {}
+            for key, status in dl.metadata_status.items():
+                if status.get('status') == 'error' and 'error' in status:
+                    errors[key] = status['error']
+            if errors:
+                data['metadata_errors'] = errors
+        
+        await sio.emit('updated', data)
 
     async def completed(self, dl):
         data = ObjectSerializer().default(dl)
@@ -298,9 +301,30 @@ if config.URL_PREFIX != '/':
     def index_redirect_dir(request):
         return web.HTTPFound(config.URL_PREFIX)
 
+# Initialize dqueue before routes
+dqueue = None
+
+async def init_dqueue():
+    global dqueue
+    dqueue = DownloadQueue(config, Notifier())
+    await dqueue._DownloadQueue__import_queue()
+
+# Run initialization in event loop
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+loop.run_until_complete(init_dqueue())
+
+# Now add routes that depend on dqueue
 routes.static(config.URL_PREFIX + 'download/', config.DOWNLOAD_DIR, show_index=config.DOWNLOAD_DIRS_INDEXABLE)
 routes.static(config.URL_PREFIX + 'audio_download/', config.AUDIO_DOWNLOAD_DIR, show_index=config.DOWNLOAD_DIRS_INDEXABLE)
 routes.static(config.URL_PREFIX, os.path.join(config.BASE_DIR, 'ui/dist/metube'))
+
+try:
+    app.add_routes(routes)
+except ValueError as e:
+    if 'ui/dist/metube' in str(e):
+        raise RuntimeError('Could not find the frontend UI static assets. Please run `node_modules/.bin/ng build` inside the ui folder') from e
+    raise e
 
 # https://github.com/aio-libs/aiohttp/pull/4615 waiting for release
 # @routes.options(config.URL_PREFIX + 'add')
@@ -313,6 +337,8 @@ async def on_prepare(request, response):
     if 'Origin' in request.headers:
         response.headers['Access-Control-Allow-Origin'] = request.headers['Origin']
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+
+app.on_response_prepare.append(on_prepare)
 
 def supports_reuse_port():
     try:
@@ -381,30 +407,15 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
     log.info(f"Listening on {config.HOST}:{config.PORT}")
 
-    # Add routes and middleware only once
-    app.add_routes(routes)
-    app.on_response_prepare.append(on_prepare)
-    app.on_startup.append(init_app)  # Single initialization point
+    async def init():
+        return app
 
-    # SSL configuration
-    ssl_context = None
-    if config.HTTPS:
-        if not config.CERTFILE or not config.KEYFILE:
-            log.error('HTTPS is enabled but CERTFILE or KEYFILE is not set')
-            sys.exit(1)
-        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        ssl_context.load_cert_chain(config.CERTFILE, config.KEYFILE)
-
-    # Port reuse configuration
-    reuse_port = supports_reuse_port()
-    if not reuse_port:
-        log.warning('Port reuse is not supported on this platform')
-
-    # Start the application
-    web.run_app(
-        app,
-        host=config.HOST,
-        port=int(config.PORT),
-        ssl_context=ssl_context,
-        reuse_port=reuse_port
-    )
+    try:
+        if config.HTTPS:
+            ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            ssl_context.load_cert_chain(config.CERTFILE, config.KEYFILE)
+            web.run_app(init(), host=config.HOST, port=int(config.PORT), ssl_context=ssl_context)
+        else:
+            web.run_app(init(), host=config.HOST, port=int(config.PORT))
+    finally:
+        loop.close()

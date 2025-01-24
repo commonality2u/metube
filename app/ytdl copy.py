@@ -11,7 +11,6 @@ import json
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 import uuid
-import sqlite3
 
 import yt_dlp.networking.impersonate
 from dl_formats import get_format, get_opts, AUDIO_FORMATS
@@ -84,21 +83,64 @@ class DownloadQueueNotifier:
         raise NotImplementedError
 
 class DownloadInfo:
-    def __init__(self, id, title, url, quality, format, folder, custom_name_prefix, error):
-        # Keep original field order and initialization
-        self.id = id
-        self.title = title
+    def __init__(self, url, quality='best', format='mp4', folder=None, custom_name_prefix=None, playlist_strict_mode=False, playlist_item_limit=0):
         self.url = url
         self.quality = quality
-        self.format = format 
+        self.format = format
         self.folder = folder
         self.custom_name_prefix = custom_name_prefix
-        self.error = error  # Add error field here
-        # Original status fields
-        self.msg = self.percent = self.speed = self.eta = None
-        self.status = "pending"
+        self.playlist_strict_mode = playlist_strict_mode
+        self.playlist_item_limit = playlist_item_limit
+        self.id = str(uuid.uuid4())
+        self.title = None
+        self.filename = None
         self.size = None
-        self.timestamp = time.time_ns()
+        self.status = None
+        self.msg = None
+        self.percent = 0
+        self.speed = None
+        self.eta = None
+        self.checked = False
+        self.deleting = False
+        self.metadata_status = {
+            'description': {'status': 'pending'},
+            'thumbnail': {'status': 'pending'},
+            'info_json': {'status': 'pending'},
+            'subtitles': {'status': 'pending'},
+            'transcript': {'status': 'pending'}
+        }
+        self.metadata = {
+            'video': {
+                'description': None,
+                'duration': None,
+                'view_count': None,
+                'like_count': None,
+                'comment_count': None,
+                'upload_date': None
+            },
+            'channel': {
+                'id': None,
+                'name': None,
+                'subscriber_count': None
+            },
+            'playlist': {
+                'id': None,
+                'title': None,
+                'index': None
+            },
+            'transcript': {
+                'language': 'en',
+                'content': []
+            },
+            'files': {
+                'audio': None,
+                'thumbnail': None,
+                'description': None,
+                'info_json': None,
+                'subtitles': []
+            }
+        }
+        self.created_time = datetime.now().isoformat()
 
     def to_dict(self):
         return {
@@ -128,7 +170,9 @@ class DownloadInfo:
 
     @classmethod
     def from_dict(cls, d):
-        info = cls(d['id'], d['title'], d['url'], d['quality'], d['format'], d['folder'], d['custom_name_prefix'], d['error'])
+        info = cls(d['url'], d.get('quality'), d.get('format'), d.get('folder'), 
+                  d.get('custom_name_prefix'), d.get('playlist_strict_mode', False), 
+                  d.get('playlist_item_limit', 0))
         info.id = d.get('id', str(uuid.uuid4()))
         info.title = d.get('title')
         info.status = d.get('status')
@@ -201,10 +245,75 @@ class Download:
         self.proc = None
         self.loop = None
         self.notifier = None
+        self.retry_delay = 1  # Base delay for retries in seconds
+        self.max_retries = 3  # Maximum number of retries for operations
+        self._started = False
 
+    def started(self):
+        """Check if download has started"""
+        return self._started
+
+    async def start(self, notifier):
+        """Start the download process using asyncio threads"""
+        self.notifier = notifier
+        self.loop = asyncio.get_running_loop()
+        self.status_queue = asyncio.Queue()  # Use asyncio queue
+        self._started = True
+        
+        # Run the download in a thread
+        try:
+            await self.loop.run_in_executor(None, self._download)
+            
+            while True:
+                try:
+                    status = await asyncio.wait_for(self.status_queue.get(), timeout=1.0)
+                    if status.get('status') == 'error':
+                        self.info.status = 'error'
+                        self.info.msg = status.get('msg', 'Download failed')
+                        break
+                    elif status.get('status') == 'finished':
+                        self.info.status = 'finished'
+                        self.info.msg = status.get('msg', 'Download completed')
+                        break
+                    else:
+                        self.info.status = status.get('status')
+                        self.info.msg = status.get('msg')
+                        self.info.size = status.get('total_bytes') or status.get('total_bytes_estimate')
+                        self.info.percent = (status.get('downloaded_bytes', 0) / self.info.size * 100) if self.info.size else 0
+                        self.info.speed = status.get('speed')
+                        self.info.eta = status.get('eta')
+                        self.info.metadata_status = status.get('metadata_status', self.info.metadata_status)
+                        self.info.metadata = status.get('metadata', self.info.metadata)
+                        if 'tmpfilename' in status:
+                            self.tmpfilename = status['tmpfilename']
+                        await self.notifier.updated(self.info)
+                except asyncio.TimeoutError:
+                    # Check if download is still running
+                    continue
+                except Exception as e:
+                    log.error(f'Error in download loop: {str(e)}', exc_info=True)
+                    self.info.status = 'error'
+                    self.info.msg = str(e)
+                    break
+        except Exception as e:
+            log.error(f'Error starting download: {str(e)}', exc_info=True)
+            self.info.status = 'error'
+            self.info.msg = str(e)
 
     def _download(self):
         try:
+            def put_status(st):
+                if not hasattr(self, 'status_queue') or not self.status_queue:
+                    return
+                
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        self.status_queue.put(st),
+                        self.loop
+                    )
+                except Exception as e:
+                    log.error(f"Error putting status: {str(e)}")
+
             def count_videos():
                 """Count total videos before starting download"""
                 try:
@@ -482,212 +591,92 @@ class Download:
         except yt_dlp.utils.YoutubeDLError as exc:
             self.status_queue.put({'status': 'error', 'msg': str(exc)})
 
-    async def start(self, notifier):
-        if Download.manager is None:
-            Download.manager = multiprocessing.Manager()
-        self.status_queue = Download.manager.Queue()
-        self.proc = multiprocessing.Process(target=self._download)
-        
-        log.info(f"Starting download process for {self.info.title} (ID: {self.info.id})")
-        self.proc.start()
-        
-        self.loop = asyncio.get_running_loop()
-        self.notifier = notifier
-        self.info.status = 'preparing'
-        await self.notifier.updated(self.info)
-        asyncio.create_task(self.update_status())
-        return await self.loop.run_in_executor(None, self.proc.join)
-
-    def cancel(self):
-        if self.running():
-            log.info(f"Canceling download for {self.info.title} (ID: {self.info.id})")
-            self.proc.kill()
-        self.canceled = True
-
-    def close(self):
-        if self.started():
-            log.info(f"Closing download process for {self.info.title} (ID: {self.info.id})")
-            self.proc.close()
-            self.status_queue.put(None)
-
-    def running(self):
-        try:
-            return self.proc is not None and self.proc.is_alive()
-        except ValueError:
-            return False
-
-    def started(self):
-        return self.proc is not None
-
-    async def update_status(self):
-        while True:
-            status = await self.loop.run_in_executor(None, self.status_queue.get)
-            if status is None:
-                return
-                
-            try:
-                self.tmpfilename = status.get('tmpfilename')
-                if 'filename' in status:
-                    fileName = status.get('filename')
-                    self.info.filename = os.path.relpath(fileName, self.download_dir)
-                    self.info.size = os.path.getsize(fileName) if os.path.exists(fileName) else None
-                    log.info(f"File saved: {self.info.filename} (Size: {self.info.size})")
-
-                # Update metadata progress
-                if 'metadata_status' in status:
-                    old_status = self.info.metadata_status.copy() if hasattr(self.info, 'metadata_status') else {}
-                    self.info.metadata_status = status['metadata_status']
-                    
-                    # Log metadata status changes
-                    for key, new_status in self.info.metadata_status.items():
-                        old = old_status.get(key, {}).get('status')
-                        new = new_status.get('status')
-                        if old != new:
-                            if new == 'completed':
-                                log.info(f"Metadata extraction completed for {key}")
-                            elif new == 'error':
-                                log.error(f"Metadata extraction failed for {key}: {new_status.get('error')}")
-
-                # Update download status
-                old_status = self.info.status
-                self.info.status = status['status']
-                if old_status != self.info.status:
-                    log.info(f"Download status changed from {old_status} to {self.info.status}")
-                
-                self.info.msg = status.get('msg')
-                if self.info.msg:
-                    log.info(f"Download message: {self.info.msg}")
-
-                # Update progress
-                if 'downloaded_bytes' in status:
-                    total = status.get('total_bytes') or status.get('total_bytes_estimate')
-                    if total:
-                        self.info.percent = status['downloaded_bytes'] / total * 100
-                        log.debug(f"Download progress: {self.info.percent:.1f}%")
-
-                self.info.speed = status.get('speed')
-                self.info.eta = status.get('eta')
-                
-                # Log completion or errors
-                if self.info.status == 'finished':
-                    log.info(f"Download completed successfully for {self.info.title}")
-                    # Log metadata extraction summary
-                    if hasattr(self.info, 'metadata_status'):
-                        completed = sum(1 for s in self.info.metadata_status.values() if s.get('status') == 'completed')
-                        total = len(self.info.metadata_status)
-                        log.info(f"Metadata extraction summary: {completed}/{total} components completed")
-                elif self.info.status == 'error':
-                    log.error(f"Download failed for {self.info.title}: {self.info.msg}")
-                
-                await self.notifier.updated(self.info)
-                
-            except Exception as e:
-                log.error(f"Error updating status: {str(e)}", exc_info=True)
-                await self.notifier.updated(self.info)
-
 class PersistentQueue:
-    def __init__(self, path):
-        self.path = path
+    def __init__(self, path, **kwargs):
+        pdir = os.path.dirname(path)
+        if not os.path.isdir(pdir):
+            os.makedirs(pdir)
+        self.path = path + '.json'
         self.dict = OrderedDict()
-        # Create parent directories if needed
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        # Connect to SQLite database
-        self.conn = sqlite3.connect(f'file:{path}?mode=rwc', uri=True)
-        self._init_db()
         self.load()
 
-    def _init_db(self):
-        """Initialize the SQLite database schema"""
-        self.conn.execute('''CREATE TABLE IF NOT EXISTS queue_items 
-                            (id TEXT PRIMARY KEY, 
-                             data BLOB,
-                             timestamp INTEGER)''')
-        self.conn.commit()
-
     def load(self):
-        """Load items from SQLite database into memory"""
         try:
-            cursor = self.conn.execute(
-                'SELECT id, data FROM queue_items ORDER BY timestamp ASC'
-            )
-            self.dict.clear()
-            for key, value in cursor:
-                try:
-                    # Deserialize the JSON data
-                    data = json.loads(value)
-                    if isinstance(data, dict):
-                        # Convert dict to DownloadInfo if needed
-                        data = DownloadInfo.from_dict(data)
-                    self.dict[key] = data
-                except Exception as e:
-                    log.error(f"Error deserializing item {key}: {str(e)}")
+            if os.path.exists(self.path):
+                with open(self.path, 'r') as f:
+                    data = json.load(f)
+                    for k, v in data.items():
+                        if isinstance(v, dict):
+                            v = DownloadInfo.from_dict(v)
+                        self.dict[k] = v
         except Exception as e:
             log.error(f"Error loading queue from {self.path}: {str(e)}")
-            self.dict = OrderedDict()  # Reset to empty on error
+            self.dict = OrderedDict()
 
     def exists(self, key):
-        """Check if key exists in queue"""
         return key in self.dict
 
     def get(self, key):
-        """Get item by key"""
         return self.dict[key]
 
     def items(self):
-        """Get all items in queue"""
         return self.dict.items()
 
+    def saved_items(self):
+        try:
+            if os.path.exists(self.path):
+                with open(self.path, 'r') as f:
+                    data = json.load(f)
+                    return [(k, v if isinstance(v, DownloadInfo) else DownloadInfo.from_dict(v)) 
+                            for k, v in data.items()]
+        except Exception as e:
+            log.error(f"Error reading saved items from {self.path}: {str(e)}")
+            return []
+
     def put(self, value):
-        """Add item to queue"""
-        if hasattr(value, 'info'):
-            key = value.info.url
-            self.dict[key] = value
-            try:
-                # Serialize the data
-                data = json.dumps(value.info.to_dict() if hasattr(value.info, 'to_dict') else value.info.__dict__)
-                # Update or insert the item
-                self.conn.execute(
-                    '''INSERT OR REPLACE INTO queue_items (id, data, timestamp) 
-                       VALUES (?, ?, ?)''',
-                    (key, data, int(time.time() * 1000))
-                )
-                self.conn.commit()
-            except Exception as e:
-                log.error(f"Error saving to queue {self.path}: {str(e)}")
-        else:
-            log.error(f"Invalid value type for queue: {type(value)}")
+        try:
+            if hasattr(value, 'info'):
+                key = value.info.url
+                self.dict[key] = value
+                try:
+                    with open(self.path, 'w') as f:
+                        data = {}
+                        for k, v in self.dict.items():
+                            if hasattr(v, 'info'):
+                                data[k] = v.info.__dict__ if hasattr(v.info, '__dict__') else v.info
+                            else:
+                                data[k] = v.__dict__ if hasattr(v, '__dict__') else v
+                        json.dump(data, f, indent=2, default=lambda o: o.__dict__ if hasattr(o, '__dict__') else str(o))
+                except Exception as e:
+                    log.error(f"Error saving to queue {self.path}: {str(e)}")
+            else:
+                log.error(f"Invalid value type for queue: {type(value)}")
+        except Exception as e:
+            log.error(f"Error in put operation: {str(e)}", exc_info=True)
 
     def delete(self, key):
-        """Remove item from queue"""
         if key in self.dict:
             del self.dict[key]
             try:
-                self.conn.execute('DELETE FROM queue_items WHERE id = ?', (key,))
-                self.conn.commit()
+                with open(self.path, 'w') as f:
+                    data = {}
+                    for k, v in self.dict.items():
+                        if hasattr(v, 'info'):
+                            data[k] = v.info.__dict__ if hasattr(v.info, '__dict__') else v.info
+                        else:
+                            data[k] = v.__dict__ if hasattr(v, '__dict__') else v
+                    json.dump(data, f, indent=2, default=lambda o: o.__dict__ if hasattr(o, '__dict__') else str(o))
             except Exception as e:
                 log.error(f"Error deleting from queue {self.path}: {str(e)}")
 
     def next(self):
-        """Get next item in queue"""
         try:
             return next(iter(self.dict.items()))
         except StopIteration:
             return None, None
 
     def empty(self):
-        """Check if queue is empty"""
         return not bool(self.dict)
-
-    def close(self):
-        """Close database connection"""
-        try:
-            self.conn.close()
-        except Exception as e:
-            log.error(f"Error closing queue database {self.path}: {str(e)}")
-
-    def __del__(self):
-        """Destructor to ensure database connection is closed"""
-        self.close()
 
 class DownloadQueue:
     def __init__(self, config, notifier):
@@ -695,42 +684,64 @@ class DownloadQueue:
         self.notifier = notifier
         self.event = asyncio.Event()
         
-        # Initialize all three queues
-        self.queue = PersistentQueue(os.path.join(config.STATE_DIR, 'queue'))
-        self.done = PersistentQueue(os.path.join(config.STATE_DIR, 'completed'))
-        self.pending = PersistentQueue(os.path.join(config.STATE_DIR, 'pending'))
-        self.done.load()
-
-    async def initialize(self):
-        """Initialize the download queue and start background tasks"""
-        # Start background tasks
+        # Ensure state directory exists
+        os.makedirs(self.config.STATE_DIR, exist_ok=True)
+        
+        # Initialize queue databases properly with more robust error handling
+        dbs = ['queue', 'completed', 'pending']
+        for db in dbs:
+            db_path = os.path.join(self.config.STATE_DIR, db)
+            try:
+                # Initialize with a simple JSON file instead of shelve
+                if not os.path.exists(db_path + '.json'):
+                    with open(db_path + '.json', 'w') as f:
+                        json.dump({}, f)
+            except Exception as e:
+                log.error(f"Error initializing database {db_path}: {str(e)}")
+                
+        self.queue = PersistentQueue(os.path.join(self.config.STATE_DIR, 'queue'))
+        self.done = PersistentQueue(os.path.join(self.config.STATE_DIR, 'completed'))
+        self.pending = PersistentQueue(os.path.join(self.config.STATE_DIR, 'pending'))
+        
+        # Import existing queue items and start background tasks
+        asyncio.create_task(self.__import_queue())
         asyncio.create_task(self.__download())
-        await self.__import_queue()
 
     async def __import_queue(self):
         try:
-            for k, v in self.queue.saved_items():
+            saved_items = self.queue.saved_items()
+            # Clear existing in-memory entries (DownloadInfo)
+            self.queue.dict.clear()
+            for k, v in saved_items:
+                # Directly reconstruct Download object from persisted data
                 if isinstance(v, dict):
-                    # Convert dict to DownloadInfo if needed
                     v = DownloadInfo.from_dict(v)
-                elif isinstance(v, DownloadInfo):
-                    # Use existing DownloadInfo object
-                    pass
-                else:
-                    log.error(f"Invalid queue item type: {type(v)}")
-                    continue
                 
-                # Add to queue with default values for missing attributes
-                await self.add(
-                    url=v.url,
-                    quality=getattr(v, 'quality', None),
-                    format=getattr(v, 'format', None),
-                    folder=getattr(v, 'folder', None),
-                    custom_name_prefix=getattr(v, 'custom_name_prefix', None),
-                    playlist_strict_mode=getattr(v, 'playlist_strict_mode', False),
-                    playlist_item_limit=getattr(v, 'playlist_item_limit', None),
-                    auto_start=False  # Send to pending queue
-                )
+                if isinstance(v, DownloadInfo):
+                    # Create Download with existing DownloadInfo
+                    dldirectory, _ = self.__calc_download_path(v.quality, v.format, v.folder)
+                    
+                    # Enhanced type validation with error handling
+                    try:
+                        playlist_item_limit = int(v.playlist_item_limit or 0)
+                        playlist_item_limit = max(0, min(playlist_item_limit, 1000))
+                    except (TypeError, ValueError):
+                        playlist_item_limit = 0
+                        log.warning(f"Invalid playlist_item_limit value: {v.playlist_item_limit}")
+                    
+                    dl = Download(
+                        dldirectory,
+                        self.config.TEMP_DIR,
+                        self.config.OUTPUT_TEMPLATE,
+                        self.config.OUTPUT_TEMPLATE_CHAPTER,
+                        v.quality,
+                        v.format,
+                        dict(self.config.YTDL_OPTIONS),
+                        v
+                    )
+                    dl.info.playlist_item_limit = playlist_item_limit
+                    self.queue.put(dl)
+                    log.debug(f"Restored download queue item: {v.id} with limit {playlist_item_limit}")
         except Exception as e:
             log.error(f"Error importing queue: {str(e)}", exc_info=True)
 
@@ -824,8 +835,7 @@ class DownloadQueue:
             log.info(f'Channel/Playlist metadata: {playlist_data}')
             
             # Process all entries in batches
-            BATCH_SIZE = 50  # Process 50 videos at a time
-            BATCH_PAUSE = 10  # 10 second pause between batches
+            BATCH_SIZE = 100  # Increased from 50 to 100
             
             for batch_start in range(0, total_entries, BATCH_SIZE):
                 batch_end = min(batch_start + BATCH_SIZE, total_entries)
@@ -833,16 +843,19 @@ class DownloadQueue:
                 
                 log.info(f'Processing batch {batch_start//BATCH_SIZE + 1} of {(total_entries + BATCH_SIZE - 1)//BATCH_SIZE} ({batch_start+1}-{batch_end} of {total_entries} videos)')
                 
+                batch_results = []
                 for index, etr in enumerate(batch, start=batch_start + 1):
                     etr["_type"] = "video"
                     etr.update(playlist_data)
                     etr["playlist_index"] = '{{0:0{0:d}d}}'.format(playlist_index_digits).format(index)
-                    results.append(await self.__add_entry(etr, quality, format, folder, custom_name_prefix, playlist_strict_mode, playlist_item_limit, auto_start, already))
-                
-                # If this isn't the last batch, pause before continuing
-                if batch_end < total_entries:
-                    log.info(f'Pausing for {BATCH_PAUSE} seconds before next batch...')
-                    await asyncio.sleep(BATCH_PAUSE)
+                    result = await self.__add_entry(etr, quality, format, folder, custom_name_prefix, playlist_strict_mode, playlist_item_limit, auto_start, already)
+                    batch_results.append(result)
+                    
+                    # Trigger event after each successful video addition
+                    if result.get('status') == 'ok' and auto_start:
+                        self.event.set()
+                        
+                results.extend(batch_results)
             
             if any(res['status'] == 'error' for res in results):
                 return {'status': 'error', 'msg': ', '.join(res['msg'] for res in results if res['status'] == 'error' and 'msg' in res)}
@@ -852,18 +865,17 @@ class DownloadQueue:
             if not self.queue.exists(entry['id']):
                 # Create DownloadInfo with all required parameters
                 dl = DownloadInfo(
-                    id=entry['id'],
-                    title=entry.get('title') or entry['id'],
                     url=entry.get('webpage_url') or entry['url'],
                     quality=quality,
                     format=format,
                     folder=folder,
                     custom_name_prefix=custom_name_prefix,
-                    error=error,
                     playlist_strict_mode=playlist_strict_mode,
                     playlist_item_limit=playlist_item_limit
                 )
                 # Set additional attributes
+                dl.id = entry['id']
+                dl.title = entry.get('title') or entry['id']
                 dl.status = 'pending'
                 
                 # Set playlist-related attributes if available
@@ -886,15 +898,25 @@ class DownloadQueue:
 
                 ytdl_options = dict(self.config.YTDL_OPTIONS)
 
+                # Convert to int and handle None case
+                playlist_item_limit = int(playlist_item_limit) if playlist_item_limit else 0
+                # Safely handle None/type conversions
+                try:
+                    playlist_item_limit = int(playlist_item_limit) if playlist_item_limit else 0
+                except (ValueError, TypeError):
+                    playlist_item_limit = 0
+                    
                 if playlist_item_limit > 0:
-                    log.info(f'playlist limit is set. Processing only first {playlist_item_limit} entries')
-                    ytdl_options['playlistend'] = playlist_item_limit
+                    log.info(f'playlist limit set to {playlist_item_limit}')
+                    ytdl_options['playlistend'] = min(playlist_item_limit, 1000)  # Add safety cap
 
+                # Create the download object
+                download = Download(dldirectory, self.config.TEMP_DIR, output, output_chapter, quality, format, ytdl_options, dl)
+                self.queue.put(download)
+                
+                # Always set the event when auto_start is True to trigger the download
                 if auto_start is True:
-                    self.queue.put(Download(dldirectory, self.config.TEMP_DIR, output, output_chapter, quality, format, ytdl_options, dl))
                     self.event.set()
-                else:
-                    self.pending.put(Download(dldirectory, self.config.TEMP_DIR, output, output_chapter, quality, format, ytdl_options, dl))
                 await self.notifier.added(dl)
             return {'status': 'ok'}
         return {'status': 'error', 'msg': f'Unsupported resource "{etype}"'}
@@ -915,12 +937,11 @@ class DownloadQueue:
 
     async def start_pending(self, ids):
         for id in ids:
-            if not self.pending.exists(id):
+            if not self.queue.exists(id):
                 log.warn(f'requested start for non-existent download {id}')
                 continue
-            dl = self.pending.get(id)
+            dl = self.queue.get(id)
             self.queue.put(dl)
-            self.pending.delete(id)
             self.event.set()
         return {'status': 'ok'}
 
@@ -953,57 +974,74 @@ class DownloadQueue:
         return {'status': 'ok'}
 
     def get(self):
-        return (
-            list((k, v.info) for k, v in self.queue.items()) + 
-            list((k, v.info) for k, v in self.pending.items()),
-            list((k, v.info) for k, v in self.done.items())
-        )
+        return(list((k, v.info) for k, v in self.queue.items()),
+               list((k, v.info) for k, v in self.done.items()))
 
     async def __download(self):
         while True:
-            while self.queue.empty():
-                log.info('waiting for item to download')
-                await self.event.wait()
-                self.event.clear()
-            id, entry = self.queue.next()
-            log.info(f'downloading {entry.info.title}')
-            await entry.start(self.notifier)
-            if entry.info.status != 'finished':
-                if entry.tmpfilename and os.path.isfile(entry.tmpfilename):
-                    try:
-                        os.remove(entry.tmpfilename)
-                    except:
-                        pass
-                entry.info.status = 'error'
-            entry.close()
-            if self.queue.exists(id):
-                self.queue.delete(id)
-                if entry.canceled:
-                    await self.notifier.canceled(id)
-                else:
-                    self.done.put(entry)
-                    await self.notifier.completed(entry.info)
-
-def get_playlist_videos(url):
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': True,
-        'force_generic_extractor': False
-    }
-    
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        try:
-            result = ydl.extract_info(url, download=False)
-            if 'entries' in result:
-                # No limit on number of videos
-                return [
-                    {'url': entry['url'], 'title': entry['title']}
-                    for entry in result['entries']
-                    if entry is not None
-                ]
-            else:
-                return [{'url': result['webpage_url'], 'title': result['title']}]
-        except Exception as e:
-            logger.error(f"Error extracting playlist info: {str(e)}")
-            return []
+            try:
+                while self.queue.empty():
+                    log.info('waiting for item to download')
+                    await self.event.wait()
+                    self.event.clear()
+                
+                id, download = self.queue.next()
+                if not id or not download:
+                    log.warning('Got empty queue item, continuing...')
+                    continue
+                    
+                log.info(f'Starting download for item {id}')
+                
+                try:
+                    # Ensure download directory exists and is writable
+                    dldirectory, _ = self.__calc_download_path(
+                        download.info.quality,
+                        download.info.format,
+                        download.info.folder
+                    )
+                    if not os.path.exists(dldirectory):
+                        os.makedirs(dldirectory, exist_ok=True)
+                    
+                    # Start the download with proper error handling
+                    await download.start(self.notifier)
+                    
+                    # Handle download completion
+                    if download.info.status == 'finished':
+                        if self.queue.exists(id):
+                            self.queue.delete(id)
+                            self.done.put(download)
+                            await self.notifier.completed(download.info)
+                            log.info(f'Successfully completed download for {id}')
+                    else:
+                        # Handle failed download
+                        if download.tmpfilename and os.path.isfile(download.tmpfilename):
+                            try:
+                                os.remove(download.tmpfilename)
+                            except Exception as e:
+                                log.error(f'Error removing temporary file: {str(e)}')
+                        
+                        download.info.status = 'error'
+                        if self.queue.exists(id):
+                            self.queue.delete(id)
+                            await self.notifier.completed(download.info)
+                            log.error(f'Download failed for {id}: {download.info.msg}')
+                    
+                    # Clean up
+                    download.close()
+                    
+                except Exception as e:
+                    log.error(f'Error processing download {id}: {str(e)}', exc_info=True)
+                    download.info.status = 'error'
+                    download.info.msg = str(e)
+                    if self.queue.exists(id):
+                        self.queue.delete(id)
+                        await self.notifier.completed(download.info)
+                    
+                # Trigger the event for the next item if queue is not empty
+                if not self.queue.empty():
+                    self.event.set()
+                    
+            except Exception as e:
+                log.error(f'Critical error in download loop: {str(e)}', exc_info=True)
+                # Wait a bit before retrying to prevent tight error loops
+                await asyncio.sleep(1)

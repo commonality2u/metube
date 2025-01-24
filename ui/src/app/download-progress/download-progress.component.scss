@@ -1,0 +1,149 @@
+.progress-container {
+  margin: 1rem 0;
+
+  .progress-title {
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+
+  .video-count {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    color: #2196f3;
+
+    mat-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+    }
+
+    span {
+      font-weight: 500;
+    }
+  }
+
+  .overall-progress, .current-progress {
+    margin-bottom: 1rem;
+
+    .progress-label {
+      font-size: 0.9rem;
+      color: rgba(0, 0, 0, 0.6);
+      margin-bottom: 0.25rem;
+    }
+  }
+
+  .progress-text {
+    text-align: right;
+    font-size: 0.9rem;
+    color: rgba(0, 0, 0, 0.6);
+  }
+}
+
+.metadata-progress {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 4px;
+
+  .metadata-title {
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+
+  .metadata-items {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.5rem;
+  }
+
+  .metadata-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+
+    mat-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+
+      &.completed {
+        color: #4caf50;
+      }
+
+      &.error {
+        color: #f44336;
+      }
+
+      &.in_progress {
+        color: #2196f3;
+      }
+
+      &.pending {
+        color: rgba(0, 0, 0, 0.38);
+      }
+    }
+
+    .error-msg {
+      font-size: 0.8rem;
+      color: #f44336;
+      margin-left: auto;
+    }
+  }
+}
+
+.json-cleaning {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: rgba(33, 150, 243, 0.05);
+  border-radius: 4px;
+
+  .cleaning-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+
+    mat-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      color: #2196f3;
+    }
+
+    span {
+      font-weight: 500;
+    }
+  }
+
+  .cleaning-msg {
+    font-size: 0.9rem;
+    color: rgba(0, 0, 0, 0.6);
+    margin-left: 1.5rem;
+  }
+}
+
+.warning-message {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #ff9800;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  padding: 0.5rem;
+  background: rgba(255, 152, 0, 0.05);
+  border-radius: 4px;
+
+  mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+  }
+}
+
+.error-message {
+  color: #f44336;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+} 

@@ -1,0 +1,55 @@
+<!-- Main progress -->
+<div class="progress-container">
+  <div class="progress-title">{{ download.title }}</div>
+  
+  <!-- Video count status -->
+  <div class="video-count" *ngIf="download.status === 'counting'">
+    <mat-icon class="in_progress">search</mat-icon>
+    <span>{{ download.msg }}</span>
+  </div>
+
+  <!-- Overall progress -->
+  <div class="overall-progress" *ngIf="download.total_videos">
+    <div class="progress-label">Overall Progress: {{ download.completed_videos }}/{{ download.total_videos }} videos</div>
+    <mat-progress-bar [value]="(download.completed_videos / download.total_videos) * 100"></mat-progress-bar>
+  </div>
+
+  <!-- Current video progress -->
+  <div class="current-progress" *ngIf="download.progress">
+    <div class="progress-label">Current Video:</div>
+    <mat-progress-bar [value]="download.progress"></mat-progress-bar>
+    <div class="progress-text">{{ download.progress }}%</div>
+  </div>
+</div>
+
+<!-- Metadata extraction progress -->
+<div class="metadata-progress" *ngIf="download.metadata_status">
+  <div class="metadata-title">Metadata Extraction:</div>
+  <div class="metadata-items">
+    <div class="metadata-item" *ngFor="let item of getMetadataItems(download.metadata_status)">
+      <mat-icon [class]="item.status">{{getStatusIcon(item.status)}}</mat-icon>
+      <span>{{item.name}}</span>
+      <span class="error-msg" *ngIf="item.error">{{item.error}}</span>
+    </div>
+  </div>
+</div>
+
+<!-- JSON Cleaning Status -->
+<div class="json-cleaning" *ngIf="download.status === 'cleaning_json'">
+  <div class="cleaning-status">
+    <mat-icon class="in_progress">hourglass_empty</mat-icon>
+    <span>Cleaning JSON metadata files...</span>
+  </div>
+  <div class="cleaning-msg" *ngIf="download.msg">{{download.msg}}</div>
+</div>
+
+<!-- Warning message -->
+<div class="warning-message" *ngIf="download.status === 'warning'">
+  <mat-icon>warning</mat-icon>
+  <span>{{ download.msg }}</span>
+</div>
+
+<!-- Error message -->
+<div class="error-message" *ngIf="download.error">
+  {{ download.error }}
+</div> 

@@ -10,13 +10,9 @@ import socketio
 import logging
 import json
 import pathlib
-import asyncio
-from json_cleaner import JSONCleaner
 
 from ytdl import DownloadQueueNotifier, DownloadQueue
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger('main')
 
 class Config:
@@ -32,14 +28,11 @@ class Config:
         'URL_PREFIX': '',
         'PUBLIC_HOST_URL': 'download/',
         'PUBLIC_HOST_AUDIO_URL': 'audio_download/',
-        'OUTPUT_TEMPLATE': '%(channel)s/%(title)s.%(ext)s',
-        'OUTPUT_TEMPLATE_CHAPTER': '%(channel)s/%(playlist_title|Videos)s/chapters/%(title)s - %(section_number)s %(section_title)s.%(ext)s',
-        'OUTPUT_TEMPLATE_PLAYLIST': '%(channel)s/%(playlist_title|Videos)s/%(title)s.%(ext)s',
-        'OUTPUT_TEMPLATE_SUBTITLES': '%(channel)s/%(playlist_title|Videos)s/%(title)s.%(ext)s',
-        'OUTPUT_TEMPLATE_DESCRIPTION': '%(channel)s/%(playlist_title|Videos)s/descriptions/%(title)s.%(ext)s',
-        'OUTPUT_TEMPLATE_METADATA': '%(channel)s/%(playlist_title|Videos)s/metadata/%(title)s.%(ext)s',
-        'DEFAULT_OPTION_PLAYLIST_STRICT_MODE': 'false',
-        'DEFAULT_OPTION_PLAYLIST_ITEM_LIMIT': '0',
+        'OUTPUT_TEMPLATE': '%(title)s.%(ext)s',
+        'OUTPUT_TEMPLATE_CHAPTER': '%(title)s - %(section_number)s %(section_title)s.%(ext)s',
+        'OUTPUT_TEMPLATE_PLAYLIST': '%(playlist_title)s/%(title)s.%(ext)s',
+        'DEFAULT_OPTION_PLAYLIST_STRICT_MODE' : 'false',
+        'DEFAULT_OPTION_PLAYLIST_ITEM_LIMIT' : '0',
         'YTDL_OPTIONS': '{}',
         'YTDL_OPTIONS_FILE': '',
         'ROBOTS_TXT': '',
@@ -91,14 +84,6 @@ class Config:
                 sys.exit(1)
             self.YTDL_OPTIONS.update(opts)
 
-async def init_app(app):
-    """Initialize the application"""
-    global dqueue
-    dqueue = DownloadQueue(config, Notifier())
-    await dqueue.initialize()
-    log.info("Application initialized successfully")
-    return app
-    
 config = Config()
 
 class ObjectSerializer(json.JSONEncoder):
@@ -115,66 +100,23 @@ sio.attach(app, socketio_path=config.URL_PREFIX + 'socket.io')
 routes = web.RouteTableDef()
 
 class Notifier(DownloadQueueNotifier):
-    def __init__(self):
-        self.json_cleaner = JSONCleaner(r"D:\Documents\Boxing_Legends_Videos_downloads")
-        
     async def added(self, dl):
-        data = ObjectSerializer().default(dl)
-        if hasattr(dl, 'metadata_status'):
-            data['metadata_status'] = dl.metadata_status
-        await sio.emit('added', data)
+        await sio.emit('added', serializer.encode(dl))
 
     async def updated(self, dl):
-        await self.sio.emit('updated', {
-            'id': dl.id,
-            'title': dl.title,
-            'status': dl.status,
-            'error': dl.error if hasattr(dl, 'error') else None,
-            'progress': dl.progress,
-            'info': dl.info
-        })
+        await sio.emit('updated', serializer.encode(dl))
 
     async def completed(self, dl):
-        data = ObjectSerializer().default(dl)
-        if hasattr(dl, 'metadata_status'):
-            data['metadata_status'] = dl.metadata_status
-        if hasattr(dl, 'metadata'):
-            data['metadata'] = dl.metadata
-            
-        # Include metadata extraction summary
-        if hasattr(dl, 'metadata_status'):
-            summary = {
-                'total': len(dl.metadata_status),
-                'completed': sum(1 for s in dl.metadata_status.values() if s.get('status') == 'completed'),
-                'failed': sum(1 for s in dl.metadata_status.values() if s.get('status') == 'error'),
-                'errors': {k: v.get('error') for k, v in dl.metadata_status.items() if v.get('status') == 'error' and 'error' in v}
-            }
-            data['metadata_summary'] = summary
-            
-        await sio.emit('completed', data)
-        
-        # Trigger JSON cleaning after download completes
-        try:
-            log.info(f"Starting JSON cleaning for completed download: {dl.title}")
-            asyncio.create_task(self._clean_json_files())
-        except Exception as e:
-            log.error(f"Error during JSON cleaning: {str(e)}", exc_info=True)
-
-    async def _clean_json_files(self):
-        """Run the JSON cleaner asynchronously"""
-        try:
-            # Run the JSON cleaner in a thread pool to avoid blocking
-            loop = asyncio.get_running_loop()
-            stats = await loop.run_in_executor(None, self.json_cleaner.process_all_files)
-            log.info(f"JSON cleaning completed. Stats: {stats}")
-        except Exception as e:
-            log.error(f"Error in JSON cleaning task: {str(e)}", exc_info=True)
+        await sio.emit('completed', serializer.encode(dl))
 
     async def canceled(self, id):
-        await sio.emit('canceled', {'id': id})
+        await sio.emit('canceled', serializer.encode(id))
 
     async def cleared(self, id):
-        await sio.emit('cleared', {'id': id})
+        await sio.emit('cleared', serializer.encode(id))
+
+dqueue = DownloadQueue(config, Notifier())
+app.on_startup.append(lambda app: dqueue.initialize())
 
 @routes.post(config.URL_PREFIX + 'add')
 async def add(request):
@@ -301,6 +243,12 @@ if config.URL_PREFIX != '/':
 routes.static(config.URL_PREFIX + 'download/', config.DOWNLOAD_DIR, show_index=config.DOWNLOAD_DIRS_INDEXABLE)
 routes.static(config.URL_PREFIX + 'audio_download/', config.AUDIO_DOWNLOAD_DIR, show_index=config.DOWNLOAD_DIRS_INDEXABLE)
 routes.static(config.URL_PREFIX, os.path.join(config.BASE_DIR, 'ui/dist/metube'))
+try:
+    app.add_routes(routes)
+except ValueError as e:
+    if 'ui/dist/metube' in str(e):
+        raise RuntimeError('Could not find the frontend UI static assets. Please run `node_modules/.bin/ng build` inside the ui folder') from e
+    raise e
 
 # https://github.com/aio-libs/aiohttp/pull/4615 waiting for release
 # @routes.options(config.URL_PREFIX + 'add')
@@ -309,10 +257,13 @@ async def add_cors(request):
 
 app.router.add_route('OPTIONS', config.URL_PREFIX + 'add', add_cors)
 
+
 async def on_prepare(request, response):
     if 'Origin' in request.headers:
         response.headers['Access-Control-Allow-Origin'] = request.headers['Origin']
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+
+app.on_response_prepare.append(on_prepare)
 
 def supports_reuse_port():
     try:
@@ -323,88 +274,13 @@ def supports_reuse_port():
     except (AttributeError, OSError):
         return False
 
-@routes.get(config.URL_PREFIX + 'metadata/{id}')
-async def get_metadata(request):
-    id = request.match_info['id']
-    
-    # Check completed downloads first
-    if dqueue.done.exists(id):
-        dl = dqueue.done.get(id)
-        if hasattr(dl.info, 'metadata') and hasattr(dl.info, 'metadata_status'):
-            return web.Response(text=serializer.encode({
-                'metadata': dl.info.metadata,
-                'metadata_status': dl.info.metadata_status
-            }))
-    
-    # Check active downloads
-    if dqueue.queue.exists(id):
-        dl = dqueue.queue.get(id)
-        if hasattr(dl.info, 'metadata') and hasattr(dl.info, 'metadata_status'):
-            return web.Response(text=serializer.encode({
-                'metadata': dl.info.metadata,
-                'metadata_status': dl.info.metadata_status
-            }))
-    
-    raise web.HTTPNotFound(text=serializer.encode({
-        'status': 'error',
-        'message': f'No metadata found for id: {id}'
-    }))
-
-@routes.get(config.URL_PREFIX + 'metadata')
-async def get_all_metadata(request):
-    metadata = {
-        'completed': [],
-        'active': []
-    }
-    
-    # Get metadata for completed downloads
-    for id, dl in dqueue.done.items():
-        if hasattr(dl.info, 'metadata') and hasattr(dl.info, 'metadata_status'):
-            metadata['completed'].append({
-                'id': id,
-                'metadata': dl.info.metadata,
-                'metadata_status': dl.info.metadata_status
-            })
-    
-    # Get metadata for active downloads
-    for id, dl in dqueue.queue.items():
-        if hasattr(dl.info, 'metadata') and hasattr(dl.info, 'metadata_status'):
-            metadata['active'].append({
-                'id': id,
-                'metadata': dl.info.metadata,
-                'metadata_status': dl.info.metadata_status
-            })
-    
-    return web.Response(text=serializer.encode(metadata))
-
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
     log.info(f"Listening on {config.HOST}:{config.PORT}")
 
-    # Add routes and middleware only once
-    app.add_routes(routes)
-    app.on_response_prepare.append(on_prepare)
-    app.on_startup.append(init_app)  # Single initialization point
-
-    # SSL configuration
-    ssl_context = None
     if config.HTTPS:
-        if not config.CERTFILE or not config.KEYFILE:
-            log.error('HTTPS is enabled but CERTFILE or KEYFILE is not set')
-            sys.exit(1)
         ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        ssl_context.load_cert_chain(config.CERTFILE, config.KEYFILE)
-
-    # Port reuse configuration
-    reuse_port = supports_reuse_port()
-    if not reuse_port:
-        log.warning('Port reuse is not supported on this platform')
-
-    # Start the application
-    web.run_app(
-        app,
-        host=config.HOST,
-        port=int(config.PORT),
-        ssl_context=ssl_context,
-        reuse_port=reuse_port
-    )
+        ssl_context.load_cert_chain(certfile=config.CERTFILE, keyfile=config.KEYFILE)
+        web.run_app(app, host=config.HOST, port=int(config.PORT), reuse_port=supports_reuse_port(), ssl_context=ssl_context)
+    else:
+        web.run_app(app, host=config.HOST, port=int(config.PORT), reuse_port=supports_reuse_port())

@@ -1,0 +1,44 @@
+2025-01-24 03:31:58,424 - ytdl - ERROR - Error loading queue from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:31:58,428 - ytdl - ERROR - Error loading queue from /downloads/.metube/completed: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:31:58,432 - ytdl - ERROR - Error loading queue from /downloads/.metube/pending: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:32:37,710 - ytdl - ERROR - Error loading queue from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:32:37,716 - ytdl - ERROR - Error loading queue from /downloads/.metube/completed: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:32:37,720 - ytdl - ERROR - Error loading queue from /downloads/.metube/pending: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-23 21:34:55,002 - ytdl - ERROR - Error loading queue from ./test_state\queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-23 21:34:55,004 - ytdl - ERROR - Error loading queue from ./test_state\completed: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-23 21:34:55,004 - ytdl - ERROR - Error loading queue from ./test_state\pending: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-23 21:34:55,005 - ytdl - ERROR - Error reading saved items from ./test_state\queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:35:49,931 - ytdl - ERROR - Error loading queue from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:35:49,934 - ytdl - ERROR - Error loading queue from /downloads/.metube/completed: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:35:49,938 - ytdl - ERROR - Error loading queue from /downloads/.metube/pending: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:35:49,942 - ytdl - ERROR - Error reading saved items from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:45:22,420 - ytdl - ERROR - Error loading queue from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:45:22,425 - ytdl - ERROR - Error loading queue from /downloads/.metube/completed: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:45:22,431 - ytdl - ERROR - Error loading queue from /downloads/.metube/pending: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:45:22,435 - ytdl - ERROR - Error reading saved items from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:46:05,075 - ytdl - ERROR - Error loading queue from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:46:05,079 - ytdl - ERROR - Error loading queue from /downloads/.metube/completed: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:46:05,083 - ytdl - ERROR - Error loading queue from /downloads/.metube/pending: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None
+2025-01-24 03:46:05,086 - ytdl - ERROR - Error reading saved items from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+None

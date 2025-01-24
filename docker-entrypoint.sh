@@ -4,6 +4,7 @@ echo "Setting umask to ${UMASK}"
 umask ${UMASK}
 echo "Creating download directory (${DOWNLOAD_DIR}), state directory (${STATE_DIR}), and temp dir (${TEMP_DIR})"
 mkdir -p "${DOWNLOAD_DIR}" "${STATE_DIR}" "${TEMP_DIR}"
+mkdir -p /app/logs && chmod 777 /app/logs
 
 if [ `id -u` -eq 0 ] && [ `id -g` -eq 0 ]; then
     if [ "${UID}" -eq 0 ]; then

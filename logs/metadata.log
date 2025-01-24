@@ -1,0 +1,32 @@
+2025-01-24 03:31:58,424 - Error loading queue from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:31:58,428 - Error loading queue from /downloads/.metube/completed: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:31:58,432 - Error loading queue from /downloads/.metube/pending: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:32:37,710 - Error loading queue from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:32:37,716 - Error loading queue from /downloads/.metube/completed: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:32:37,720 - Error loading queue from /downloads/.metube/pending: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-23 21:34:55,002 - Error loading queue from ./test_state\queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-23 21:34:55,004 - Error loading queue from ./test_state\completed: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-23 21:34:55,004 - Error loading queue from ./test_state\pending: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-23 21:34:55,005 - Error reading saved items from ./test_state\queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-23 21:34:55,005 - waiting for item to download
+2025-01-24 03:35:49,931 - Error loading queue from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:35:49,934 - Error loading queue from /downloads/.metube/completed: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:35:49,938 - Error loading queue from /downloads/.metube/pending: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:35:49,942 - Error reading saved items from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:35:49,945 - waiting for item to download
+2025-01-24 03:45:22,420 - Error loading queue from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:45:22,425 - Error loading queue from /downloads/.metube/completed: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:45:22,431 - Error loading queue from /downloads/.metube/pending: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:45:22,435 - Error reading saved items from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:45:22,438 - waiting for item to download
+2025-01-24 03:46:05,075 - Error loading queue from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:46:05,079 - Error loading queue from /downloads/.metube/completed: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:46:05,083 - Error loading queue from /downloads/.metube/pending: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:46:05,086 - Error reading saved items from /downloads/.metube/queue: db file doesn't exist; use 'c' or 'n' flag to create a new db
+2025-01-24 03:46:05,089 - waiting for item to download
+2025-01-24 17:10:18,382 - Error importing queue: 'PersistentQueue' object has no attribute 'saved_items'
+Traceback (most recent call last):
+  File "/app/app/ytdl.py", line 712, in __import_queue
+    for k, v in self.queue.saved_items():
+                ^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'PersistentQueue' object has no attribute 'saved_items'

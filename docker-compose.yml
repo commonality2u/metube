@@ -1,0 +1,60 @@
+version: '3'
+services:
+  metube:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8083:8081"
+    volumes:
+      - ./downloads:/downloads
+      - ./logs:/app/logs
+    environment:
+      DOWNLOAD_DIR: /downloads
+      OUTPUT_TEMPLATE: "%(channel)s/%(title)s.%(ext)s"
+      OUTPUT_TEMPLATE_PLAYLIST: "%(channel)s/%(playlist_title)s/%(title)s.%(ext)s"
+      YTDL_OPTIONS: |
+        {
+          "format": "bestaudio[ext=m4a]",
+          "postprocessors": [
+            {
+              "key": "FFmpegExtractAudio",
+              "preferredcodec": "mp3", 
+              "preferredquality": "192"
+            },
+            {
+              "key": "FFmpegMetadata"
+            },
+            {
+              "key": "EmbedThumbnail"
+            }
+          ],
+          "writethumbnail": true,
+          "writedescription": true,
+          "writeinfojson": true,
+          "writesubtitles": true,
+          "writeautomaticsub": true,
+          "subtitleslangs": ["en"],
+          "embedthumbnail": true,
+          "embedmetadata": true,
+          "extract_flat": true,
+          "ignoreerrors": true,
+          "no_warnings": true,
+          "outtmpl": {
+            "default": "/downloads/%(channel)s/%(playlist_title|Videos)s/%(title)s.%(ext)s",
+            "thumbnail": "/downloads/%(channel)s/%(playlist_title|Videos)s/thumbnails/%(title)s.%(ext)s",
+            "description": "/downloads/%(channel)s/%(playlist_title|Videos)s/descriptions/%(title)s.txt",
+            "infojson": "/downloads/%(channel)s/%(playlist_title|Videos)s/metadata/%(title)s.info.json"
+          },
+          "paths": {
+            "home": "/downloads",
+            "temp": "/tmp"
+          },
+          "concurrent_fragment_downloads": 1,
+          "throttledratelimit": 50000,
+          "retries": 5,
+          "fragment_retries": 5,
+          "skip_unavailable_fragments": true,
+          "continue": true,
+          "verbose": true
+        }

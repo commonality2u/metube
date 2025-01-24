@@ -1,4 +1,4 @@
-FROM node:lts-alpine as builder
+FROM node:lts-alpine AS builder
 
 WORKDIR /metube
 COPY ui ./
@@ -23,18 +23,20 @@ RUN sed -i 's/\r$//g' docker-entrypoint.sh && \
     pip uninstall pipenv -y && \
     apk del .build-deps && \
     rm -rf /var/cache/apk/* && \
-    mkdir /.cache && chmod 777 /.cache
+    mkdir /.cache && chmod 777 /.cache && \
+    mkdir -p /app/logs && chmod 777 /app/logs
 
 COPY app ./app
 COPY --from=builder /metube/dist/metube ./ui/dist/metube
 
-ENV UID=1000
-ENV GID=1000
-ENV UMASK=022
+# Combined ENV declarations
+ENV UID=1000 \
+    GID=1000 \
+    UMASK=022 \
+    DOWNLOAD_DIR=/downloads \
+    STATE_DIR=/downloads/.metube \
+    TEMP_DIR=/downloads
 
-ENV DOWNLOAD_DIR /downloads
-ENV STATE_DIR /downloads/.metube
-ENV TEMP_DIR /downloads
 VOLUME /downloads
 EXPOSE 8081
 ENTRYPOINT ["/sbin/tini", "-g", "--", "./docker-entrypoint.sh"]
