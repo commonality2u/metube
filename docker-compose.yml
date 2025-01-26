@@ -1,0 +1,41 @@
+version: "3.8"  # Docker Compose file version
+
+services:
+  metube:
+    image: alexta69/metube:latest  # Use the latest MeTube image from GitHub Container Registry
+    container_name: metube  # Give the container a name for easy management
+    ports:
+      - "8081:8081"  # Map host port 8081 to container port 8081 (web interface)
+    volumes:
+      - ./downloads:/downloads  # Mount a host directory './downloads' to the container's '/downloads' directory for persistent downloads
+      - ./config:/config      # Mount a host directory './config' for persistent configuration (optional for this setup, but good practice)
+    environment:
+      DOWNLOAD_DIR: /downloads
+      AUDIO_DOWNLOAD_DIR: /downloads/audio
+      TEMP_DIR: /downloads/temp
+      DOWNLOAD_DIRS_INDEXABLE: "true"
+      CUSTOM_DIRS: "true"
+      CREATE_CUSTOM_DIRS: "true"
+      YTDL_OPTIONS: '{"writesubtitles": true, "writeautomaticsub": true, "subtitleslangs": ["en"], "writethumbnail": true, "writedescription": true, "writeinfojson": true, "getcommentcount": true, "nocheckcertificate": true, "concurrent_fragment_downloads": 3, "retries": 3, "fragment_retries": 3}'
+      OUTPUT_TEMPLATE: "%(title)s.%(ext)s"
+      OUTPUT_TEMPLATE_CHAPTER: "%(channel)s/%(playlist_title|Videos)s/chapters/%(title)s - %(section_number)s %(section_title)s.%(ext)s"
+      OUTPUT_TEMPLATE_PLAYLIST: "%(playlist_title)s/%(title)s.%(ext)s"
+      DEFAULT_OPTION_PLAYLIST_STRICT_MODE: "false"
+      DEFAULT_OPTION_PLAYLIST_ITEM_LIMIT: "0"
+      HOST: "0.0.0.0"
+      PORT: "8081"
+      HTTPS: "false"
+      DEFAULT_THEME: "auto"
+    restart: unless-stopped # Automatically restart the container unless it's explicitly stopped
+    mem_limit: 8g  # Increased memory limit to 8GB for handling large numbers of downloads
+    memswap_limit: 10g  # Allow 2GB of swap space
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5" 
